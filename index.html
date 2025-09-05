@@ -1,160 +1,834 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-  <meta charset="UTF-8">
-  <title>Funnel Generator</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      background: #f2f2f2;
-      margin: 0;
-      padding: 0;
-      color: #111;
-    }
-    header {
-      position: sticky;
-      top: 0;
-      background: #111;
-      color: #fff;
-      padding: 15px 20px;
-      z-index: 100;
-    }
-    header h1 {
-      margin: 0;
-      font-size: 1.4em;
-    }
-    main {
-      padding: 20px;
-      max-width: 1000px;
-      margin: auto;
-    }
-    section {
-      background: #fff;
-      padding: 15px;
-      margin-bottom: 20px;
-      border-radius: 8px;
-      box-shadow: 0 3px 6px rgba(0,0,0,0.1);
-    }
-    section h2 {
-      margin-top: 0;
-      font-size: 1.2em;
-    }
-    input[type="text"], textarea, select {
-      width: 100%;
-      padding: 8px;
-      margin: 5px 0 15px 0;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-      box-sizing: border-box;
-      font-size: 1em;
-    }
-    button {
-      padding: 10px 15px;
-      background: #111;
-      color: #fff;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 1em;
-    }
-    button:hover {
-      background: #333;
-    }
-    .output {
-      white-space: pre-wrap;
-      background: #eee;
-      padding: 10px;
-      border-radius: 5px;
-      min-height: 200px;
-      overflow-x: auto;
-    }
-  </style>
-</head>
-<body>
-  <header>
-    <h1>Funnel Generator</h1>
-  </header>
-  <main>
-    <section>
-      <h2>Ввод исходных данных</h2>
-      <label>Название компании:</label>
-      <input type="text" id="companyName">
-      
-      <label>Описание / товары / услуги:</label>
-      <textarea id="companyDescription" rows="3"></textarea>
-      
-      <label>Локация:</label>
-      <input type="text" id="companyLocation">
-      
-      <label>УТП компании:</label>
-      <textarea id="companyUTP" rows="2"></textarea>
-      
-      <label>Конкуренты:</label>
-      <textarea id="companyCompetitors" rows="2"></textarea>
-      
-      <label>Каналы привлечения трафика и метрики:</label>
-      <textarea id="companyTraffic" rows="2"></textarea>
-      
-      <label>Целевая аудитория (портреты):</label>
-      <textarea id="companyAudience" rows="3"></textarea>
-      
-      <button onclick="generateFunnel()">Сгенерировать воронку</button>
-    </section>
+import React, { useState, useEffect } from 'react';
 
-    <section>
-      <h2>Результат генерации</h2>
-      <div class="output" id="output"></div>
-    </section>
-  </main>
+// Импортируем модули Firebase напрямую, чтобы обеспечить доступность функций.
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, getDocs } from 'firebase/firestore';
 
-  <script>
-    function generateFunnel() {
-      const name = document.getElementById("companyName").value;
-      const desc = document.getElementById("companyDescription").value;
-      const loc = document.getElementById("companyLocation").value;
-      const utp = document.getElementById("companyUTP").value;
-      const competitors = document.getElementById("companyCompetitors").value;
-      const traffic = document.getElementById("companyTraffic").value;
-      const audience = document.getElementById("companyAudience").value;
+const App = () => {
+  // Определяем глобальные переменные Firebase
+  const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+  const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+  const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-      if(!name || !desc) {
-        alert("Введите хотя бы название и описание компании!");
-        return;
+  // Состояние приложения
+  const [activeTab, setActiveTab] = useState('input');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [isMessageVisible, setIsMessageVisible] = useState(false);
+  const [message, setMessage] = useState('');
+  const [companyData, setCompanyData] = useState({
+    companyName: '',
+    description: '',
+    products: '',
+    location: '',
+    usp: '',
+    competitors: '',
+    channels: '',
+    audience: '',
+    website: '',
+    instagram: '',
+    threads: '',
+    tiktok: ''
+  });
+
+  // Сгенерированные и данные из базы данных
+  const [funnelData, setFunnelData] = useState(null);
+  const [rawApiResponse, setRawApiResponse] = useState(null); // Новое состояние для необработанного ответа API
+  const [brandAnalysisData, setBrandAnalysisData] = useState(null);
+  const [databaseData, setDatabaseData] = useState({ segments: [], aida: [], offers: [], brands: [], triggers: [] });
+
+  // Состояние Firebase
+  const [db, setDb] = useState(null);
+  const [auth, setAuth] = useState(null);
+  const [userId, setUserId] = useState(null);
+
+  // Состояние для ручного ввода в базу данных
+  const [newOfferText, setNewOfferText] = useState('');
+  const [newTriggerText, setNewTriggerText] = useState('');
+  const [newAidaStage, setNewAidaStage] = useState('');
+  const [newAidaContent, setNewAidaContent] = useState('');
+
+  // Эффект для инициализации Firebase и аутентификации пользователя
+  useEffect(() => {
+    try {
+      const app = initializeApp(firebaseConfig);
+      const authInstance = getAuth(app);
+      const dbInstance = getFirestore(app);
+      setDb(dbInstance);
+      setAuth(authInstance);
+
+      const authenticate = async () => {
+        try {
+          if (initialAuthToken) {
+            await signInWithCustomToken(authInstance, initialAuthToken);
+          } else {
+            await signInAnonymously(authInstance);
+          }
+        } catch (error) {
+          console.error("Authentication failed:", error);
+          setUserId(null);
+        }
+      };
+      authenticate();
+
+      onAuthStateChanged(authInstance, (user) => {
+        if (user) {
+          setUserId(user.uid);
+        } else {
+          setUserId(null);
+        }
+      });
+    } catch (error) {
+      console.error("Firebase initialization failed:", error);
+    }
+  }, []);
+
+  // Эффект для прослушивания изменений в базе данных
+  useEffect(() => {
+    if (db && userId) {
+      const dbPath = `artifacts/${appId}/users/${userId}/database`;
+      const q = query(collection(db, dbPath));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const fetchedData = { segments: [], aida: [], offers: [], brands: [], triggers: [] };
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          fetchedData.segments.push(...(data.segments || []));
+          fetchedData.aida.push(...(data.aida || []));
+          fetchedData.offers.push(...(data.offers || []));
+          fetchedData.brands.push(...(data.brands || []));
+          fetchedData.triggers.push(...(data.triggers || []));
+        });
+        setDatabaseData(fetchedData);
+      }, (error) => {
+        console.error("Error listening to database:", error);
+        showMessage('Произошла ошибка при загрузке базы данных.');
+      });
+      return () => unsubscribe();
+    }
+  }, [db, userId, appId]);
+
+  // Вспомогательная функция для отображения временного сообщения
+  const showMessage = (text) => {
+    setMessage(text);
+    setIsMessageVisible(true);
+    setTimeout(() => setIsMessageVisible(false), 3000);
+  };
+
+  // Обрабатывает генерацию воронки с помощью API генеративного ИИ
+  const handleGenerateFunnel = async () => {
+    const hasCoreData = companyData.companyName.trim() ||
+      companyData.description.trim() ||
+      companyData.website.trim() ||
+      companyData.instagram.trim() ||
+      companyData.threads.trim() ||
+      companyData.tiktok.trim();
+
+    if (!hasCoreData) {
+      showMessage('Пожалуйста, заполните хотя бы одно из следующих полей: "Название компании", "Описание", "Веб-сайт" или любую из социальных сетей.');
+      return;
+    }
+
+    setIsGenerating(true);
+    setFunnelData(null);
+    setRawApiResponse(null);
+    try {
+      const userPrompt = `На основе следующих данных компании:
+        Название: ${companyData.companyName}
+        Описание: ${companyData.description}
+        Продукты: ${companyData.products}
+        Целевая аудитория: ${companyData.audience}
+        Конкуренты: ${companyData.competitors}
+        Местоположение: ${companyData.location}
+        Веб-сайт: ${companyData.website}
+        Instagram: ${companyData.instagram}
+        Threads: ${companyData.threads}
+        TikTok: ${companyData.tiktok}
+
+        Проведи максимально глубокий и детальный анализ. Выяви все возможные, даже самые неочевидные, сегменты целевой аудитории. Для каждого сегмента опиши персону, а также проведи глубокий психологический анализ, выявив их **глубинные, неочевидные фрустрации и боли.** Не ограничивайся поверхностными проблемами, а копай глубже в их психологию, мотивацию и повседневные вызовы.
+
+        На основе всей доступной информации, включая анализ сайта, сгенерируй детальный маркетинговый план, который включает:
+        1. Все возможные сегменты целевой аудитории с описанием персон и глубинным психологическим анализом их реальных болей и фрустраций.
+        2. Уникальные торговые предложения (УТП) для каждого сегмента.
+        3. Воронку продаж по модели AIDA (Awareness, Interest, Desire, Action) для каждого сегмента. Для каждого этапа AIDA опиши контент, шаги по реализации и метрики для отслеживания.
+
+        Предоставь ответ в виде JSON объекта со следующей структурой:
+        {
+          "analysis": {
+            "company_info": "Анализ информации о компании с веб-сайта",
+            "market_duration": "Как долго на рынке",
+            "products_services": "Список продуктов/услуг",
+            "website_offers": "Офферы с сайта",
+            "website_usps": "УТП с сайта"
+          },
+          "segments": [
+            { "id": 1, "name": "Сегмент 1", "persona": "Описание персоны", "pains": ["Боль 1", "Боль 2"] }
+          ],
+          "usps": [
+            { "segmentId": 1, "text": "Текст УТП", "ads": ["Рекламное объявление 1"], "recommendations": "Рекомендации" }
+          ],
+          "funnels": [
+            {
+              "segmentId": 1,
+              "aida": {
+                "awareness": { "content": "Контент", "implementation": "Реализация", "metrics": "Метрики" },
+                "interest": { "content": "Контент", "implementation": "Реализация", "metrics": "Метрики" },
+                "desire": { "content": "Контент", "implementation": "Реализация", "metrics": "Метрики" },
+                "action": { "content": "Контент", "implementation": "Реализация", "metrics": "Метрики" }
+              }
+            }
+          ]
+        }`;
+
+      const apiKey = "AIzaSyAMdQInyKoQb69yxZ8Em2UIckZ8IjkAEwU";
+      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+
+      const payload = {
+        contents: [{ parts: [{ text: userPrompt }] }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            "type": "OBJECT",
+            "properties": {
+              "analysis": {
+                "type": "OBJECT",
+                "properties": {
+                  "company_info": { "type": "STRING" },
+                  "market_duration": { "type": "STRING" },
+                  "products_services": { "type": "STRING" },
+                  "website_offers": { "type": "STRING" },
+                  "website_usps": { "type": "STRING" }
+                }
+              },
+              "segments": {
+                "type": "ARRAY",
+                "items": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "id": { "type": "NUMBER" },
+                    "name": { "type": "STRING" },
+                    "persona": { "type": "STRING" },
+                    "pains": { "type": "ARRAY", "items": { "type": "STRING" } }
+                  }
+                }
+              },
+              "usps": {
+                "type": "ARRAY",
+                "items": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "segmentId": { "type": "NUMBER" },
+                    "text": { "type": "STRING" },
+                    "ads": { "type": "ARRAY", "items": { "type": "STRING" } },
+                    "recommendations": { "type": "STRING" }
+                  }
+                }
+              },
+              "funnels": {
+                "type": "ARRAY",
+                "items": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "segmentId": { "type": "NUMBER" },
+                    "aida": {
+                      "type": "OBJECT",
+                      "properties": {
+                        "awareness": { "type": "OBJECT", "properties": { "content": { "type": "STRING" }, "implementation": { "type": "STRING" }, "metrics": { "type": "STRING" } } },
+                        "interest": { "type": "OBJECT", "properties": { "content": { "type": "STRING" }, "implementation": { "type": "STRING" }, "metrics": { "type": "STRING" } } },
+                        "desire": { "type": "OBJECT", "properties": { "content": { "type": "STRING" }, "implementation": { "type": "STRING" }, "metrics": { "type": "STRING" } } },
+                        "action": { "type": "OBJECT", "properties": { "content": { "type": "STRING" }, "implementation": { "type": "STRING" }, "metrics": { "type": "STRING" } } }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      };
+
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`API response was not ok: ${response.status} ${response.statusText}. Details: ${errorText}`);
       }
 
-      // Простейший генератор структуры воронки
-      const output = `
-Название компании: ${name}
-Описание: ${desc}
-Локация: ${loc}
-УТП: ${utp}
-Конкуренты: ${competitors}
-Каналы трафика: ${traffic}
-ЦА: ${audience}
+      const result = await response.json();
+      const text = result?.candidates?.[0]?.content?.parts?.[0]?.text;
 
---- Генерация воронки (пример) ---
-1️⃣ Awareness:
-   - Используемые каналы: ${traffic.split(',').join(', ')}
-   - Сообщения: "Привлекаем внимание аудитории через уникальное УТП: ${utp}"
-
-2️⃣ Interest:
-   - Проблемы и боли сегментов ЦА: ${audience}
-   - Контент: статьи, посты, видео, кейсы
-
-3️⃣ Desire:
-   - Офферы на основе УТП: ${utp}
-   - Специальные предложения и триггеры
-
-4️⃣ Action:
-   - CTA: покупка, регистрация, запрос консультации
-   - Рекомендации по внедрению внутри компании: четкие скрипты работы с клиентами, обучение сотрудников
-
-5️⃣ Retention:
-   - Работа с клиентами после покупки: follow-up, акции, e-mail рассылка
-`;
-
-      document.getElementById("output").innerText = output;
+      if (text && text.trim().length > 0) {
+        try {
+          const generatedData = JSON.parse(text);
+          setFunnelData(generatedData);
+          setRawApiResponse(null);
+        } catch (parseError) {
+          console.error('Ошибка синтаксического анализа JSON:', parseError, 'Исходный текст:', text);
+          showMessage('Произошла ошибка при анализе данных. Возможно, сгенерированный JSON недействителен или неполный.');
+          setFunnelData(null);
+          setRawApiResponse(text);
+        }
+      } else {
+        showMessage('Ошибка: API вернул пустой или недействительный ответ.');
+      }
+    } catch (e) {
+      console.error('Error generating funnel:', e);
+      showMessage('Произошла ошибка при генерации воронки. Пожалуйста, попробуйте еще раз.');
+    } finally {
+      setIsGenerating(false);
+      setActiveTab('generation');
     }
-  </script>
-</body>
-</html>
+  };
+
+  // Обрабатывает анализ бренда с помощью API генеративного ИИ
+  const handleBrandAnalysis = async (brandName) => {
+    if (!brandName) {
+      showMessage('Пожалуйста, введите название бренда.');
+      return;
+    }
+
+    setIsGenerating(true);
+    try {
+      const userPrompt = `Проведи глубокий анализ бренда ${brandName} и определи, как он использует модель AIDA (Awareness, Interest, Desire, Action) в своем маркетинге. Опиши ключевые элементы для каждого этапа и сделай общие выводы. Предоставь ответ в виде JSON объекта со следующей структурой:
+      {
+        "brandName": "Название бренда",
+        "keyElements": [
+          "Awareness: Описание",
+          "Interest: Описание",
+          "Desire: Описание",
+          "Action: Описание"
+        ],
+        "insights": "Общие выводы и инсайты."
+      }`;
+      const apiKey = "AIzaSyAMdQInyKoQb69yxZ8Em2UIckZ8IjkAEwU";
+      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+
+      const payload = {
+        contents: [{ parts: [{ text: userPrompt }] }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            "type": "OBJECT",
+            "properties": {
+              "brandName": { "type": "STRING" },
+              "keyElements": { "type": "ARRAY", "items": { "type": "STRING" } },
+              "insights": { "type": "STRING" }
+            }
+          }
+        }
+      };
+
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`API response was not ok: ${response.status} ${response.statusText}. Details: ${errorText}`);
+      }
+
+      const result = await response.json();
+      const text = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (text && text.trim().length > 0) {
+        try {
+          const analysisData = JSON.parse(text);
+          setBrandAnalysisData(analysisData);
+        } catch (parseError) {
+          console.error('Ошибка синтаксического анализа JSON:', parseError);
+          showMessage('Произошла ошибка при анализе данных. Возможно, сгенерированный JSON недействителен.');
+        }
+      } else {
+        showMessage('Ошибка: API вернул пустой или недействительный ответ.');
+      }
+    } catch (e) {
+      console.error('Error analyzing brand:', e);
+      showMessage('Произошла ошибка при анализе бренда. Пожалуйста, попробуйте еще раз.');
+    } finally {
+      setIsGenerating(false);
+      setActiveTab('brand-analysis');
+    }
+  };
+
+  // Сохраняет сгенерированные данные в Firestore
+  const handleSaveToDatabase = async () => {
+    if (!userId || !db || !funnelData) {
+      showMessage('Не удалось сохранить. Произошла ошибка или нет данных для сохранения.');
+      return;
+    }
+    try {
+      const docRef = doc(db, `artifacts/${appId}/users/${userId}/database`, 'funnelData');
+      const dataToSave = {
+        segments: funnelData.segments,
+        offers: funnelData.usps,
+        aida: funnelData.funnels.map(f => f.aida),
+        brands: brandAnalysisData ? [brandAnalysisData] : []
+      };
+      await setDoc(docRef, dataToSave, { merge: true });
+      showMessage('Данные успешно сохранены!');
+    } catch (e) {
+      console.error('Error saving document: ', e);
+      showMessage('Произошла ошибка при сохранении данных.');
+    }
+  };
+
+  // Добавляет новый элемент в базу данных Firestore
+  const handleAddItemToDatabase = async (type) => {
+    if (!userId || !db) {
+      showMessage('Не удалось сохранить. Произошла ошибка аутентификации.');
+      return;
+    }
+
+    let newItem;
+    switch (type) {
+      case 'offers':
+        if (!newOfferText) {
+          showMessage('Пожалуйста, заполните поле для оффера.');
+          return;
+        }
+        newItem = { text: newOfferText };
+        break;
+      case 'triggers':
+        if (!newTriggerText) {
+          showMessage('Пожалуйста, заполните поле для триггера.');
+          return;
+        }
+        newItem = { text: newTriggerText };
+        break;
+      case 'aida':
+        if (!newAidaStage || !newAidaContent) {
+          showMessage('Пожалуйста, заполните все поля для элемента AIDA.');
+          return;
+        }
+        newItem = { stage: newAidaStage, content: newAidaContent };
+        break;
+      default:
+        return;
+    }
+
+    try {
+      const docRef = doc(db, `artifacts/${appId}/users/${userId}/database`, 'funnelData');
+      const dataToSave = {
+        [type]: [...(databaseData[type] || []), newItem]
+      };
+      await setDoc(docRef, dataToSave, { merge: true });
+      showMessage('Данные успешно добавлены!');
+      // Сбрасываем поля ввода
+      setNewOfferText('');
+      setNewTriggerText('');
+      setNewAidaStage('');
+      setNewAidaContent('');
+    } catch (e) {
+      console.error('Error adding document: ', e);
+      showMessage('Произошла ошибка при добавлении данных.');
+    }
+  };
+
+  const renderContent = () => {
+    switch (activeTab) {
+      case 'input':
+        return (
+          <div>
+            <h2 className="text-2xl font-bold mb-6 text-white">Ввод исходных данных</h2>
+            <div className="space-y-4">
+              {Object.keys(companyData).map(key => (
+                <div key={key}>
+                  <label className="block text-sm font-medium text-neutral-100 mb-1 capitalize">
+                    {
+                      {
+                        companyName: 'Название компании / бренда',
+                        description: 'Описание компании',
+                        products: 'Продукты или услуги',
+                        location: 'Локация/рынок',
+                        usp: 'УТП компании (текущее)',
+                        competitors: 'Конкуренты',
+                        channels: 'Каналы привлечения трафика и метрики',
+                        audience: 'Целевая аудитория',
+                        website: 'Веб-сайт',
+                        instagram: 'Instagram',
+                        threads: 'Threads',
+                        tiktok: 'TikTok'
+                      }[key]
+                    }
+                  </label>
+                  <textarea
+                    className="w-full p-2 border border-neutral-500 rounded-md bg-neutral-700 text-white focus:outline-none focus:ring-2 focus:ring-neutral-500"
+                    rows={key === 'description' || key === 'audience' ? 4 : 1}
+                    value={companyData[key]}
+                    onChange={(e) => setCompanyData({ ...companyData, [key]: e.target.value })}
+                  />
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={handleGenerateFunnel}
+              className="mt-6 px-6 py-2 bg-neutral-800 hover:bg-neutral-900 text-white font-bold rounded-full transition-colors duration-200"
+              disabled={isGenerating}
+            >
+              {isGenerating ? 'Генерация...' : 'Сгенерировать воронку'}
+            </button>
+          </div>
+        );
+      case 'generation':
+        return (
+          <div>
+            <h2 className="text-2xl font-bold mb-6 text-neutral-200">Сгенерированная воронка</h2>
+            {isGenerating ? (
+              <div className="flex flex-col items-center justify-center p-10">
+                <svg className="animate-spin -ml-1 mr-3 h-8 w-8 text-neutral-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span className="text-neutral-400 mt-4">Генерируем воронку...</span>
+              </div>
+            ) : rawApiResponse ? (
+              <div className="bg-neutral-700 p-6 rounded-lg border border-neutral-600">
+                <p className="text-red-400 font-semibold mb-2">Ошибка генерации: API вернул неверный формат.</p>
+                <pre className="text-neutral-200 text-sm overflow-auto max-h-96">{rawApiResponse}</pre>
+                <p className="text-neutral-400 mt-4">Пожалуйста, попробуйте еще раз или проверьте исходные данные.</p>
+              </div>
+            ) : funnelData ? (
+              <div className="space-y-8">
+                {/* Секция с глубоким анализом */}
+                {funnelData.analysis && (
+                  <div className="bg-neutral-700 p-6 rounded-lg border border-neutral-600">
+                    <h3 className="text-xl font-bold text-neutral-200 mb-4">Глубокий анализ</h3>
+                    <div className="space-y-4 text-sm text-neutral-300">
+                      <p><span className="font-semibold text-neutral-100">Информация о компании:</span> {funnelData.analysis.company_info}</p>
+                      <p><span className="font-semibold text-neutral-100">На рынке:</span> {funnelData.analysis.market_duration}</p>
+                      <p><span className="font-semibold text-neutral-100">Продукты/услуги:</span> {funnelData.analysis.products_services}</p>
+                      <p><span className="font-semibold text-neutral-100">Офферы на сайте:</span> {funnelData.analysis.website_offers}</p>
+                      <p><span className="font-semibold text-neutral-100">УТП с сайта:</span> {funnelData.analysis.website_usps}</p>
+                    </div>
+                  </div>
+                )}
+                {/* Секция с исходными данными */}
+                <div className="bg-neutral-700 p-6 rounded-lg border border-neutral-600">
+                  <h3 className="text-xl font-bold text-neutral-200 mb-4">Исходные данные</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-neutral-300">
+                    {Object.entries(companyData).map(([key, value]) => (
+                      value && (
+                        <p key={key}>
+                          <span className="font-semibold text-neutral-100">
+                            {{
+                              companyName: 'Название компании',
+                              description: 'Описание',
+                              products: 'Продукты/услуги',
+                              location: 'Локация/рынок',
+                              usp: 'УТП',
+                              competitors: 'Конкуренты',
+                              channels: 'Каналы',
+                              audience: 'Аудитория',
+                              website: 'Веб-сайт',
+                              instagram: 'Instagram',
+                              threads: 'Threads',
+                              tiktok: 'TikTok'
+                            }[key]}:
+                          </span>{' '}
+                          {value}
+                        </p>
+                      )
+                    ))}
+                  </div>
+                </div>
+
+                {/* Секция с сгенерированной воронкой */}
+                <div>
+                  <h3 className="text-xl font-bold text-neutral-200 mb-4">Сегменты ЦА и персоны</h3>
+                  <div className="space-y-4">
+                    {funnelData.segments.map((s, i) => (
+                      <div key={i} className="bg-neutral-700 p-4 rounded-lg border border-neutral-600">
+                        <p className="font-semibold text-neutral-200">Сегмент: {s.name}</p>
+                        <p className="text-sm text-neutral-300 mt-1">Персона: {s.persona}</p>
+                        <p className="text-sm text-neutral-300 mt-2">Боли:</p>
+                        <ul className="list-disc list-inside text-sm text-neutral-400">
+                          {s.pains.map((p, painIndex) => <li key={painIndex}>{p}</li>)}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-neutral-200 mb-4">УТП и офферы</h3>
+                  <div className="space-y-4">
+                    {funnelData.usps.map((u, i) => (
+                      <div key={i} className="bg-neutral-700 p-4 rounded-lg border border-neutral-600">
+                        <p className="font-semibold text-neutral-200">УТП для сегмента {funnelData.segments.find(s => s.id === u.segmentId)?.name}</p>
+                        <p className="text-sm text-neutral-300 mt-1">{u.text}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-neutral-200 mb-4">Воронки по AIDA</h3>
+                  <div className="space-y-4">
+                    {funnelData.funnels.map((f, i) => (
+                      <div key={i} className="bg-neutral-700 p-4 rounded-lg border border-neutral-600">
+                        <p className="font-semibold text-neutral-200">Воронка для сегмента {funnelData.segments.find(s => s.id === f.segmentId)?.name}</p>
+                        {Object.entries(f.aida).map(([stage, details]) => (
+                          <div key={stage} className="mt-2 pl-4 border-l-2 border-neutral-500">
+                            <p className="font-semibold text-sm text-neutral-300 capitalize">{stage}:</p>
+                            <p className="text-xs text-neutral-400 mt-1">**Контент:** {details.content}</p>
+                            <p className="text-xs text-neutral-400 mt-1">**Шаги:** {details.implementation}</p>
+                            <p className="text-xs text-neutral-400 mt-1">**Метрики:** {details.metrics}</p>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <p className="text-neutral-400 text-center p-4">Вернитесь во вкладку "Ввод данных", чтобы сгенерировать воронку.</p>
+            )}
+            <button
+              onClick={handleSaveToDatabase}
+              className="mt-6 px-6 py-2 bg-neutral-800 hover:bg-neutral-900 text-white font-bold rounded-full transition-colors duration-200"
+            >
+              Сохранить в базу
+            </button>
+          </div>
+        );
+      case 'brand-analysis':
+        const [brandName, setBrandName] = useState('');
+        return (
+          <div>
+            <h2 className="text-2xl font-bold mb-6 text-neutral-200">Разбор бренда</h2>
+            <div className="space-y-4">
+              <label className="block text-sm font-medium text-neutral-400 mb-1">Название бренда</label>
+              <input
+                type="text"
+                className="w-full p-2 border border-neutral-600 rounded-md bg-neutral-700 text-neutral-200 focus:outline-none focus:ring-2 focus:ring-neutral-500"
+                placeholder="Например, Nike"
+                value={brandName}
+                onChange={(e) => setBrandName(e.target.value)}
+              />
+            </div>
+            <button
+              onClick={() => handleBrandAnalysis(brandName)}
+              className="mt-6 px-6 py-2 bg-neutral-800 hover:bg-neutral-900 text-white font-bold rounded-full transition-colors duration-200"
+              disabled={isGenerating}
+            >
+              {isGenerating ? 'Анализ...' : 'Анализировать'}
+            </button>
+            {brandAnalysisData && (
+              <div className="mt-8 bg-neutral-700 p-6 rounded-lg border border-neutral-600">
+                <h3 className="text-xl font-bold text-neutral-200 mb-4">{brandAnalysisData.brandName}</h3>
+                <p className="font-semibold text-neutral-300 mb-2">Ключевые элементы AIDA:</p>
+                <ul className="list-disc list-inside text-neutral-400 space-y-2">
+                  {brandAnalysisData.keyElements.map((item, i) => <li key={i}>{item}</li>)}
+                </ul>
+                <p className="font-semibold text-neutral-300 mt-4 mb-2">Выводы:</p>
+                <p className="text-neutral-400">{brandAnalysisData.insights}</p>
+              </div>
+            )}
+          </div>
+        );
+      case 'database':
+        return (
+          <div>
+            <h2 className="text-2xl font-bold mb-6 text-neutral-200">База данных</h2>
+            <div className="space-y-8">
+              {/* Офферы */}
+              <div>
+                <h3 className="text-xl font-bold text-neutral-200 mb-4">Офферы</h3>
+                <div className="flex space-x-2 mb-4">
+                  <input
+                    type="text"
+                    placeholder="Текст оффера"
+                    value={newOfferText}
+                    onChange={(e) => setNewOfferText(e.target.value)}
+                    className="flex-1 p-2 border border-neutral-600 rounded-md bg-neutral-700 text-neutral-200"
+                  />
+                  <button
+                    onClick={() => handleAddItemToDatabase('offers')}
+                    className="px-4 py-2 bg-neutral-800 hover:bg-neutral-900 text-white rounded-md"
+                  >
+                    Добавить
+                  </button>
+                </div>
+                {databaseData.offers.length > 0 ? (
+                  databaseData.offers.map((o, i) => (
+                    <div key={i} className="bg-neutral-700 p-4 rounded-lg border border-neutral-600 mb-2">
+                      <p className="font-semibold text-neutral-200">{o.text}</p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-neutral-400">База офферов пуста.</p>
+                )}
+              </div>
+              {/* Триггеры */}
+              <div>
+                <h3 className="text-xl font-bold text-neutral-200 mb-4">Триггеры</h3>
+                <div className="flex space-x-2 mb-4">
+                  <input
+                    type="text"
+                    placeholder="Текст триггера"
+                    value={newTriggerText}
+                    onChange={(e) => setNewTriggerText(e.target.value)}
+                    className="flex-1 p-2 border border-neutral-600 rounded-md bg-neutral-700 text-neutral-200"
+                  />
+                  <button
+                    onClick={() => handleAddItemToDatabase('triggers')}
+                    className="px-4 py-2 bg-neutral-800 hover:bg-neutral-900 text-white rounded-md"
+                  >
+                    Добавить
+                  </button>
+                </div>
+                {databaseData.triggers.length > 0 ? (
+                  databaseData.triggers.map((t, i) => (
+                    <div key={i} className="bg-neutral-700 p-4 rounded-lg border border-neutral-600 mb-2">
+                      <p className="font-semibold text-neutral-200">{t.text}</p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-neutral-400">База триггеров пуста.</p>
+                )}
+              </div>
+              {/* AIDA элементы */}
+              <div>
+                <h3 className="text-xl font-bold text-neutral-200 mb-4">Элементы AIDA</h3>
+                <div className="flex space-x-2 mb-4">
+                  <select
+                    value={newAidaStage}
+                    onChange={(e) => setNewAidaStage(e.target.value)}
+                    className="p-2 border border-neutral-600 rounded-md bg-neutral-700 text-neutral-200 w-1/3"
+                  >
+                    <option value="">Выберите этап</option>
+                    <option value="Внимание">Внимание</option>
+                    <option value="Интерес">Интерес</option>
+                    <option value="Желание">Желание</option>
+                    <option value="Действие">Действие</option>
+                  </select>
+                  <input
+                    type="text"
+                    placeholder="Контент"
+                    value={newAidaContent}
+                    onChange={(e) => setNewAidaContent(e.target.value)}
+                    className="flex-1 p-2 border border-neutral-600 rounded-md bg-neutral-700 text-neutral-200"
+                  />
+                  <button
+                    onClick={() => handleAddItemToDatabase('aida')}
+                    className="px-4 py-2 bg-neutral-800 hover:bg-neutral-900 text-white rounded-md"
+                  >
+                    Добавить
+                  </button>
+                </div>
+                {databaseData.aida.length > 0 ? (
+                  databaseData.aida.map((a, i) => (
+                    <div key={i} className="bg-neutral-700 p-4 rounded-lg border border-neutral-600 mb-2">
+                      <p className="font-semibold text-neutral-200 capitalize">Этап: {a.stage}</p>
+                      <p className="text-sm text-neutral-400">Контент: {a.content}</p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-neutral-400">База элементов AIDA пуста.</p>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      case 'output':
+        return (
+          <div>
+            <h2 className="text-2xl font-bold mb-6 text-neutral-200">Итоговый документ</h2>
+            <div className="bg-neutral-700 p-6 rounded-lg border border-neutral-600">
+              <h3 className="text-xl font-bold text-neutral-200 mb-4">{companyData.companyName || 'Название компании'}</h3>
+              <p className="text-sm text-neutral-300 mb-6">{companyData.description || 'Описание не предоставлено.'}</p>
+              {funnelData ? (
+                <div className="space-y-6">
+                  {funnelData.analysis && (
+                    <div>
+                      <h4 className="text-lg font-bold text-neutral-300 mb-2">Глубокий анализ</h4>
+                      <p className="text-sm text-neutral-400">**Информация о компании:** {funnelData.analysis.company_info}</p>
+                      <p className="text-sm text-neutral-400">**На рынке:** {funnelData.analysis.market_duration}</p>
+                      <p className="text-sm text-neutral-400">**Продукты/услуги:** {funnelData.analysis.products_services}</p>
+                      <p className="text-sm text-neutral-400">**Офферы на сайте:** {funnelData.analysis.website_offers}</p>
+                      <p className="text-sm text-neutral-400">**УТП с сайта:** {funnelData.analysis.website_usps}</p>
+                    </div>
+                  )}
+                  <div>
+                    <h4 className="text-lg font-bold text-neutral-300 mb-2">Сегменты ЦА и персоны</h4>
+                    {funnelData.segments.map((s, i) => (
+                      <div key={i} className="p-3 mb-2 rounded-md bg-neutral-800">
+                        <p className="font-semibold text-neutral-100">{s.name}</p>
+                        <p className="text-sm text-neutral-300">{s.persona}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div>
+                    <h4 className="text-lg font-bold text-neutral-300 mb-2">Воронка по AIDA</h4>
+
+                    {funnelData.funnels.map((f, i) => (
+                      <div key={i} className="p-3 mb-2 rounded-md bg-neutral-800">
+                        <p className="font-semibold text-neutral-100 mb-1">Воронка для сегмента: {funnelData.segments.find(s => s.id === f.segmentId)?.name}</p>
+                        {Object.entries(f.aida).map(([stage, details]) => (
+                          <div key={stage} className="pl-3 border-l-2 border-neutral-600 my-2">
+                            <p className="font-semibold text-sm text-neutral-300 capitalize">{stage}:</p>
+                            <p className="text-xs text-neutral-400">**Контент:** {details.content}</p>
+                            <p className="text-xs text-neutral-400">**Шаги:** {details.implementation}</p>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-neutral-400">Сначала сгенерируйте воронку.</p>
+              )}
+            </div>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div className="font-sans text-neutral-900 min-h-screen bg-neutral-100 flex flex-col">
+      <div className="flex-1 flex flex-col md:flex-row">
+        <aside className="md:w-64 bg-neutral-800 md:sticky top-0 h-auto md:h-screen p-6 border-r border-neutral-700">
+          <div className="flex justify-between items-center mb-6 md:block">
+            <h1 className="text-xl font-bold text-white mb-4">Генератор воронок</h1>
+            <p className="text-xs text-neutral-400">ID пользователя: {userId || 'Загрузка...'}</p>
+          </div>
+          <nav className="flex md:flex-col justify-around md:justify-start space-x-2 md:space-x-0 md:space-y-4">
+            {['input', 'generation', 'brand-analysis', 'database', 'output'].map(tab => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`py-2 px-4 rounded-md transition-colors duration-200 text-sm font-medium ${activeTab === tab ? 'bg-neutral-700 text-white' : 'bg-transparent text-neutral-400 hover:bg-neutral-700'}`}
+              >
+                {
+                  {
+                    input: 'Ввод данных',
+                    generation: 'Результат генерации',
+                    'brand-analysis': 'Разбор бренда',
+                    database: 'База данных',
+                    output: 'Итоговый документ'
+                  }[tab]
+                }
+              </button>
+            ))}
+          </nav>
+        </aside>
+        <main className="flex-1 p-6 md:p-12">
+          <div className="bg-neutral-800 p-8 rounded-lg shadow-2xl">
+            {renderContent()}
+          </div>
+        </main>
+      </div>
+      {isMessageVisible && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-neutral-900 text-white py-2 px-4 rounded-md shadow-lg transition-opacity duration-300 z-50">
+          {message}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default App;
