@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Funnel Generator</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f2f2f2;
+      margin: 0;
+      padding: 0;
+      color: #111;
+    }
+    header {
+      position: sticky;
+      top: 0;
+      background: #111;
+      color: #fff;
+      padding: 15px 20px;
+      z-index: 100;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 1.4em;
+    }
+    main {
+      padding: 20px;
+      max-width: 1000px;
+      margin: auto;
+    }
+    section {
+      background: #fff;
+      padding: 15px;
+      margin-bottom: 20px;
+      border-radius: 8px;
+      box-shadow: 0 3px 6px rgba(0,0,0,0.1);
+    }
+    section h2 {
+      margin-top: 0;
+      font-size: 1.2em;
+    }
+    input[type="text"], textarea, select {
+      width: 100%;
+      padding: 8px;
+      margin: 5px 0 15px 0;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      box-sizing: border-box;
+      font-size: 1em;
+    }
+    button {
+      padding: 10px 15px;
+      background: #111;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 1em;
+    }
+    button:hover {
+      background: #333;
+    }
+    .output {
+      white-space: pre-wrap;
+      background: #eee;
+      padding: 10px;
+      border-radius: 5px;
+      min-height: 200px;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Funnel Generator</h1>
+  </header>
+  <main>
+    <section>
+      <h2>Ввод исходных данных</h2>
+      <label>Название компании:</label>
+      <input type="text" id="companyName">
+      
+      <label>Описание / товары / услуги:</label>
+      <textarea id="companyDescription" rows="3"></textarea>
+      
+      <label>Локация:</label>
+      <input type="text" id="companyLocation">
+      
+      <label>УТП компании:</label>
+      <textarea id="companyUTP" rows="2"></textarea>
+      
+      <label>Конкуренты:</label>
+      <textarea id="companyCompetitors" rows="2"></textarea>
+      
+      <label>Каналы привлечения трафика и метрики:</label>
+      <textarea id="companyTraffic" rows="2"></textarea>
+      
+      <label>Целевая аудитория (портреты):</label>
+      <textarea id="companyAudience" rows="3"></textarea>
+      
+      <button onclick="generateFunnel()">Сгенерировать воронку</button>
+    </section>
+
+    <section>
+      <h2>Результат генерации</h2>
+      <div class="output" id="output"></div>
+    </section>
+  </main>
+
+  <script>
+    function generateFunnel() {
+      const name = document.getElementById("companyName").value;
+      const desc = document.getElementById("companyDescription").value;
+      const loc = document.getElementById("companyLocation").value;
+      const utp = document.getElementById("companyUTP").value;
+      const competitors = document.getElementById("companyCompetitors").value;
+      const traffic = document.getElementById("companyTraffic").value;
+      const audience = document.getElementById("companyAudience").value;
+
+      if(!name || !desc) {
+        alert("Введите хотя бы название и описание компании!");
+        return;
+      }
+
+      // Простейший генератор структуры воронки
+      const output = `
+Название компании: ${name}
+Описание: ${desc}
+Локация: ${loc}
+УТП: ${utp}
+Конкуренты: ${competitors}
+Каналы трафика: ${traffic}
+ЦА: ${audience}
+
+--- Генерация воронки (пример) ---
+1️⃣ Awareness:
+   - Используемые каналы: ${traffic.split(',').join(', ')}
+   - Сообщения: "Привлекаем внимание аудитории через уникальное УТП: ${utp}"
+
+2️⃣ Interest:
+   - Проблемы и боли сегментов ЦА: ${audience}
+   - Контент: статьи, посты, видео, кейсы
+
+3️⃣ Desire:
+   - Офферы на основе УТП: ${utp}
+   - Специальные предложения и триггеры
+
+4️⃣ Action:
+   - CTA: покупка, регистрация, запрос консультации
+   - Рекомендации по внедрению внутри компании: четкие скрипты работы с клиентами, обучение сотрудников
+
+5️⃣ Retention:
+   - Работа с клиентами после покупки: follow-up, акции, e-mail рассылка
+`;
+
+      document.getElementById("output").innerText = output;
+    }
+  </script>
+</body>
+</html>
